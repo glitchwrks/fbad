@@ -1,0 +1,19 @@
+			FINDBAD V6.0
+			------------
+
+The only modification from V5.9 is that ^C really does let you
+abort the program now.
+
+Also included in the LBR is a file called BIOS2RSX.RSX which is
+an RSX for CP/M Plus that will allow FBAD to work on CP/M Plus
+operating systems.  In order to use FBAD on CP/M Plus you must
+attach the RSX to FBAD.COM as follows:
+
+GENCOM FBAD60 BIOS2RSX
+
+Then the resultant FBAD60.COM will then run properly on CP/M Plus
+but will not run on CP/M V2.2 or earlier without removing the RSX.
+
+					Dave Mabry
+					29 March 1985
+
