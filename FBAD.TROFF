@@ -1,0 +1,220 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;			    current update
+;
+;
+; 2021-09-12 Customized for Pegasus II by Glitch Works, LLC
+;    v6.1    Determines if diskette is single-density and uses
+;            appropriate SPT0 and OSTK. - JSC 
+;
+; 11/11/87 Revised track number display.
+;   v60B   Modified to allow TEST routines to be left in. If TEST
+;	   is TRUE the number of records read will be reported,
+;          but only if no bad blocks were found.
+;	   Added help message--   A>FBAD $?
+;	   Added S, A and X command line options. See help message
+;	   for proper usage. Revised handling of system tracks.
+;	   Modified LTOP routine so that system track sectors
+;	   do not go through sector translation. Reading is slow
+;	   but system sectors may not use same XLATE as data
+;	   sectors.			- TAH
+;
+; 03/28/85 Cleaned up some code that sends messages.
+;   v60    Modified STOP routine so that you really can abort the
+;	   program with ^C.		- Dave Mabry
+;
+;=======================================================================
+; COMMAND LINE OPTIONS:
+;
+; Three command line options can now be specified -- S, A and X.
+;
+; If the ASTRS equate is set to NO the TRACK-Nr will be displayed
+; during testing unless the A option is specified in which case
+; an * will be printed for each track read.
+;
+; If the SYSTST equate is set to NO the system track test will be
+; skipped unless the S option is specified in which case system
+; track 0 will be read using the sector count value in the SPT0
+; equate. All other system tracks will be read using the sector
+; count value in the OSTK equate. If SPT0 or OSTK is set to zero
+; then the SPT value for the data tracks will be used.
+;   This should permit testing of system tracks where track 0 has
+; a different sector count than other system tracks which, in turn,
+; may have a different sector count than the data tracks. (e.g. JADE DD)
+;   The X option is identical to the S option but allows using a second
+; set of default values for SPT0 and/or OSTK (XSPT0 and XOSTK) in case
+; you routinely use two different disk formats.
+;
+; NOTE THAT YOU SHOULD NOT USE THE  X  AND  S  OPTIONS TOGETHER.
+;
+; Finally, for the odd case, you may specify one or two numbers
+; following the S option ( Sn0 or Sn0,n1 ). This will override
+; the default sector count values set either for SPT0 alone or
+; for both SPT0 and OSTK.
+;
+; SYSTST, BADUSR and ASTRS options:
+;
+; Many double-density disk systems have single-density system tracks.
+; If this is true with your system, you can change the program to skip
+; the system tracks, without re-assembling it.	To do this, set the byte
+; at at 103H to 0 if you don't want the system tracks tested, otherwise
+; keep it 1.  The program tests if you have a "blocked" disk system,
+; that is, when the same physical disk is separated into logical disks
+; by use of the SYSTRK word in the disk parameter block.  If more than 5
+; tracks are specified, the program skips the system tracks.
+;
+; If you are using CP/M 2.x , you may assign the user number where the
+; [UNUSED.BAD] file will be created, by changing the byte at 104H to the
+; desired user number.
+;
+; FBAD displays the TRACK-Nr it has checked on the screen-terminal.  If
+; you like to log the results on a printer (or you have a hardcopy term-
+; inal, you may want to change LOC 105H to a non-zero value, and FBAD
+; will display a * for each track checked.  The number in 105H controls
+; the number of *'s per line.  (Note patch values are HEX: 76=4CH.)  Use
+; ^P to turn the printer on before running FBAD, it will be automatically
+; turned off by the warm boot at the end.
+;
+; NOTE:  These changes can be done with DDT as follows:
+;
+;		A>DDT FBAD.COM
+;		-S103
+;		103 01 00	;Don't test SYSTEM tracks
+;		104 FF 0F	;Put [UNUSED.BAD] in USER 15
+;		105 00 4C	;Issue CR/LF after 76 *'s
+;		106 31 .	;Finished with changes
+;		-^C
+;
+;		A>SAVE 12 FBAD.COM
+;
+;=======================================================================
+;
+;			   USING THE PROGRAM
+;
+; Before using this program to "reclaim" a diskette, the diskette should
+; be reformatted.  If this is not possible, at least assure yourself
+; that any existing files on the diskette do not contain unreadable re-
+; cords.  If you have changed diskettes since the last warm-boot, you
+; must warm boot again before running this program.
+;
+; To use the program, insert both the disk containing FBAD.COM and the
+; diskette to be checked into the disk drives.	The diskette containing
+; FBAD.COM can be the one that is to be checked.  Assume that the pro-
+; gram is on drive "A" and the suspected bad disk is on drive "B".  In
+; response to the CP/M prompt "A>", type in FBAD B: This will load the
+; file FBAD.COM from drive "A" and test the diskette on drive "B" for
+; unreadable records. If no drive is specified, the currently logged-in
+; drive is assumed to contain the diskette to check.
+;
+; The program first checks the CP/M System tracks (up to 5), and any
+; errors here prohibit the diskette from being used on drive "A", since
+; all "warm boots" occur using the system tracks from the "A" drive.
+; Floppy diskettes normally use 2 tracks for the system; Winchester hard
+; disks may use one or more.
+;
+; Version  5.5	and  later  automatically skip the system check if 5 or
+; more tracks are reserved for the system.  This allows the program to
+; be used on BOTH floppy and Winchester systems without patching.
+;
+; The  program next checks the first two data blocks containing the
+; diskette directory.  If errors occur here, the program terminates with
+; the control returning to CP/M.  No other data blockes are checked as
+; errors in the directory render the diskette useless.
+;
+; Finally, all the remaining data blocks are checked.  Any records that
+; are unreadable cause the data block which contains them to be stored
+; temporarily as a "bad block".  At the end of this phase, the message
+; "nn bad blocks found" is displayed (where nn is replaced by the number
+; of bad blocks, or "No" if no read errors occur).  If bad blocks occur,
+; the filename [UNUSED].BAD is created, the list of "bad blocks" is put
+; in the allocation map of the directory entry for [UNUSED].BAD, and the
+; file is closed.  When the number of "bad blocks" exceeds 16, the pro-
+; gram will open additional extents as required to hold the overflow.
+; If the diskette has more than 32 "bad blocks", perhaps it should be
+; sent to the "big disk drive in the sky" for the rest it deserves.
+;
+; If any "bad blocks" do occur, they are allocated to [UNUSED].BAD and
+; no longer will be available to CP/M for future allocation.  This ef-
+; fectively locks out bad records on the diskette allowing its continued
+; use.
+;
+;		  Using the TEST conditional assembly
+;
+; A conditional assembly has been added to allow testing this program to
+; make sure it is reading all records on your disk that are accessible
+; to CP/M.  The program reads the disk on a block-by-block basis, so it
+; is necessary to first determine the number of blocks present.  To com-
+; mence, we must know the number of records/block (8 records/block for
+; standard IBM single density format).	If this value is not known, it
+; can be easily found by saving one page in a test file and interrogating
+; using the STAT command:
+;
+;	A>SAVE 1 TEST.SIZ
+;	A>STAT TEST.SIZ
+;
+; For standard single-density, STAT will report this file as being 1k.
+; The file size reported (in bytes) is the size of a block.  This value
+; divided by 128 bytes/record (the standard CP/M record size) will give
+; records/block.  For our IBM single density example, we have:
+;
+;      (1024 bytes/block) / (128 bytes/record) = 8 records/block.
+;
+; We can now calculate blocks/track (assuming we know the number of
+; records per track.  In our example:
+;
+;      (26 records/track) / (8 records/block) = 3.25 blocks/track
+;
+; Now armed with the total number of data tracks (75 in our IBM single
+; density example), we get total blocks accessible:
+;
+;      75 (tracks/disk) x (3.25 blocks/track) = 243.75 blocks/disk
+;
+; CP/M cannot access a fractional block, so we round down (to 243 blocks
+; in our example).  Now multiplying total blocks by records per block
+; results in total records as should be reported when TEST is set YES
+; and a good disk is read.  For our example, this value is 1944 records.
+;
+; Finally, note that if SYSTST is set YES, the records present on the
+; system tracks will be displayed as well.  In the previous example,
+; this results in 1944 + 52 = 1996 records (reported separately by the
+; TEST conditional).  Version 5.4 reported these as a single total at
+; the end.
+;
+; Run the program on a KNOWN-GOOD diskette.  It should report that it
+; has read the correct number of records.
+; We should not display the number of records read if bad blocks are
+; found since this program does not read all the records in a
+; block that is found to be bad and thus will report an inaccurate
+; number of records read.
+;
+;=======================================================================
+;
+; 03/16/85 Program will ask you if you want to continue checking on the
+;   v59    same drive as originally entered - added a byte at the end of
+;	   the code (ORIGDR) to store the value from the FCB.
+;					     ( Ken Kaplan )
+;
+; 12/12/84  Added the ability to keep bad blocks that were flagged in a
+;   v58     previous [UNUSED].BAD file.  If a block was ever flagged as
+;	    bad by this program, it is probably weak.  If on a subse-
+;	    quent test, it makes it through the BIOS retires and is read
+;	    successfully, I want the block to stay in the [UNUSED].BAD
+;	    file.  Removed the coded in LTOP which cleared the high byte
+;	    of HL after a call to RECTRN.  My BIOS (Morrow DJDMA) sets
+;	    the high bit of HL to indicated side 1 of a double-sided
+;	    drive.			- Ron Schwabel (Ron Schwabel)
+;
+; 11/29/84  Integrated Mike Webbs idea to display Track-Nr. Changed DOC
+;   v57     up front accordingly.	- BGE
+;
+; 07/04/84  Added Ted Shapin's fixes from 1981 that were not included in
+;   v56     the 06/07/84 version.  Reformatted.
+;					- Irv Hoff
+;
+; 06/07/84  Added code at CHKSYS to skip system tracks if more than 5
+;   v55     are present (most systems use 1 or at most 2 tracks for the
+;	    system).  This makes the program practical for both floppy
+;	    and Winchester systems.  Cosmetic change for printer logging
+;	    to add CR/LF after 76 *'s.	Fixed problem in DECOUT to give
+;	    correct total for max size Winchester disks.
+;					- DHR
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
